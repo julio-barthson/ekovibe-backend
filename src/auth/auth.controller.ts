@@ -31,6 +31,7 @@ import { ModuleGuard } from 'src/guards/module.guard';
 import { RequireModule } from 'src/decorators/require-module.decorator';
 import { SuperAdminGuard } from 'src/guards/super-admin.guard';
 import { AddTeamMemberDto, UpdateTeamMemberDto } from './dto/team-member.dto';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -83,6 +84,66 @@ export class AuthController {
     });
 
     return res.json({ user, message: `Welcome to Ekovibe, ${user.firstName}` });
+  }
+
+  // ── Google OAuth ──────────────────────────────────────────────────────────
+  // Both routes are hit as full-page navigations through the Next.js /api
+  // proxy, so the cookies below are set on the frontend origin.
+
+  @UseGuards(GoogleAuthGuard)
+  @Get('google')
+  googleAuth() {
+    // GoogleAuthGuard redirects to Google's consent screen — never reached.
+  }
+
+  @UseGuards(GoogleAuthGuard)
+  @Get('google/callback')
+  async googleCallback(
+    @Req() req: ExpressRequest & { user?: any },
+    @Res() res: Response,
+  ) {
+    const frontendUrl = process.env.FRONTEND_URL ?? '';
+
+    if (!req.user) {
+      return res.redirect(
+        `${frontendUrl}/login?error=${encodeURIComponent('Google sign-in was cancelled or failed. Please try again.')}`,
+      );
+    }
+
+    const { access_token, refresh_token } = await this.authService.login(
+      req.user,
+    );
+
+    const cookieOptions = this.authService.getCookieOptions();
+    const sessionMs = this.authService.getSessionMs();
+
+    res.cookie('refreshToken', refresh_token, {
+      ...cookieOptions,
+      maxAge: sessionMs,
+    });
+
+    res.cookie('accessToken', access_token, {
+      ...cookieOptions,
+      maxAge: sessionMs,
+    });
+
+    // `state` carries the base64url-encoded page the user started from.
+    const state = typeof req.query?.state === 'string' ? req.query.state : '';
+    let next = '';
+    try {
+      const decoded = state
+        ? Buffer.from(state, 'base64url').toString('utf8')
+        : '';
+      // Only accept same-site relative paths — never redirect off-origin.
+      if (decoded.startsWith('/') && !decoded.startsWith('//')) next = decoded;
+    } catch {
+      next = '';
+    }
+
+    const target = new URL(`${frontendUrl}/auth/callback`);
+    if (next) target.searchParams.set('next', next);
+
+    return res.redirect(target.toString());
   }
 
   @Post('logout')

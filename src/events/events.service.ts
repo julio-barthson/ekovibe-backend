@@ -6,13 +6,14 @@ import {
 } from '@nestjs/common';
 import slugify from 'slugify';
 import Mailjet from 'node-mailjet';
-import { EventStatus } from 'generated/prisma/client';
+import { EventStatus, OrderStatus } from 'generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto, UpdateEventStatusDto } from './dto/update-event.dto';
 import { EventQueryDto } from './dto/event-query.dto';
 import { EventApprovedEmail } from 'emails/event-approved-email';
 import { EventRejectedEmail } from 'emails/event-rejected-email';
+import { EventCancelledEmail } from 'emails/event-cancelled-email';
 
 function getMailjet() {
   return Mailjet.apiConnect(
@@ -39,7 +40,13 @@ export class EventsService {
     return slug;
   }
 
-  private async createEvent(dto: CreateEventDto, userId: string, status: EventStatus) {
+  private async createEvent(
+    dto: CreateEventDto,
+    userId: string,
+    status: EventStatus,
+    // Only admins set the platform fee; vendor submissions fall back to the default
+    allowServiceFee: boolean,
+  ) {
     const slug = await this.generateUniqueSlug(dto.title);
 
     return this.prisma.event.create({
@@ -56,6 +63,8 @@ export class EventsService {
         city: dto.city,
         dressCode: dto.dressCode,
         isMemberOnly: dto.isMemberOnly ?? false,
+        ...(allowServiceFee &&
+          dto.serviceFee !== undefined && { serviceFee: dto.serviceFee }),
         createdById: userId,
         status,
         ticketTiers: {
@@ -72,11 +81,11 @@ export class EventsService {
   }
 
   async create(dto: CreateEventDto, adminUserId: string) {
-    return this.createEvent(dto, adminUserId, EventStatus.DRAFT);
+    return this.createEvent(dto, adminUserId, EventStatus.DRAFT, true);
   }
 
   async createByVendor(dto: CreateEventDto, vendorId: string) {
-    return this.createEvent(dto, vendorId, EventStatus.PENDING_REVIEW);
+    return this.createEvent(dto, vendorId, EventStatus.PENDING_REVIEW, false);
   }
 
   // Admin: all events, any status
@@ -204,7 +213,7 @@ export class EventsService {
     return { ...event, totalCapacity, totalSold, totalRevenue };
   }
 
-  async update(id: string, dto: UpdateEventDto) {
+  async update(id: string, dto: UpdateEventDto, allowServiceFee = true) {
     const existing = await this.prisma.event.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Event not found');
 
@@ -226,6 +235,8 @@ export class EventsService {
       ...(dto.city !== undefined && { city: dto.city }),
       ...(dto.dressCode !== undefined && { dressCode: dto.dressCode }),
       ...(dto.isMemberOnly !== undefined && { isMemberOnly: dto.isMemberOnly }),
+      ...(allowServiceFee &&
+        dto.serviceFee !== undefined && { serviceFee: dto.serviceFee }),
     };
 
     if (dto.ticketTiers) {
@@ -292,10 +303,21 @@ export class EventsService {
     const existing = await this.prisma.event.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Event not found');
 
-    return this.prisma.event.update({
+    const updated = await this.prisma.event.update({
       where: { id },
       data: { status: dto.status },
     });
+
+    // Only on the transition into CANCELLED, so re-saving a cancelled event
+    // never mails ticket holders twice.
+    if (
+      dto.status === EventStatus.CANCELLED &&
+      existing.status !== EventStatus.CANCELLED
+    ) {
+      await this.notifyTicketHoldersOfCancellation(id);
+    }
+
+    return updated;
   }
 
   async delete(id: string) {
@@ -307,13 +329,91 @@ export class EventsService {
 
     // If it has paid orders, cancel instead of deleting
     if (existing._count.orders > 0) {
-      return this.prisma.event.update({
+      const cancelled = await this.prisma.event.update({
         where: { id },
         data: { status: EventStatus.CANCELLED },
       });
+
+      if (existing.status !== EventStatus.CANCELLED) {
+        await this.notifyTicketHoldersOfCancellation(id);
+      }
+
+      return cancelled;
     }
 
     return this.prisma.event.delete({ where: { id } });
+  }
+
+  // Tells everyone holding a paid ticket that the event is off. Never throws —
+  // the cancellation itself has already been committed by the time this runs.
+  private async notifyTicketHoldersOfCancellation(eventId: string) {
+    try {
+      const event = await this.prisma.event.findUnique({
+        where: { id: eventId },
+        include: {
+          orders: {
+            where: { status: OrderStatus.PAID },
+            include: {
+              user: true,
+              items: true,
+            },
+          },
+        },
+      });
+      if (!event || event.orders.length === 0) return;
+
+      const eventDate = event.date.toLocaleDateString('en-NG', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+
+      const messages = event.orders.map((order) => {
+        const ticketCount = order.items.reduce((s, i) => s + i.quantity, 0);
+        // Face value only — service fees are non-refundable per the policy
+        const refundAmount = (order.subtotal / 100).toLocaleString('en-NG', {
+          style: 'currency',
+          currency: 'NGN',
+        });
+
+        return {
+          From: { Email: process.env.SENDER_EMAIL_ADDRESS, Name: 'Ekovibe' },
+          To: [{ Email: order.user.email, Name: order.user.firstName }],
+          Subject: `Cancelled — ${event.title}`,
+          HTMLPart: EventCancelledEmail({
+            firstName: order.user.firstName,
+            eventTitle: event.title,
+            eventDate,
+            venueName: event.venueName,
+            orderReference: order.reference,
+            ticketCount,
+            refundAmount,
+            eventImageUrl: event.coverImage ?? undefined,
+          }),
+        };
+      });
+
+      // Mailjet caps a v3.1 send at 50 messages per request
+      for (let i = 0; i < messages.length; i += 50) {
+        const batch = messages.slice(i, i + 50);
+        try {
+          await getMailjet()
+            .post('send', { version: 'v3.1' })
+            .request({ Messages: batch });
+        } catch (e) {
+          console.error(
+            `Failed to send cancellation batch ${i / 50 + 1} for event ${eventId}:`,
+            e,
+          );
+        }
+      }
+    } catch (e) {
+      console.error(
+        `Failed to notify ticket holders of cancellation for event ${eventId}:`,
+        e,
+      );
+    }
   }
 
   // ── Vendor-scoped methods ─────────────────────────────────────────────────
@@ -460,7 +560,7 @@ export class EventsService {
     if (!existing) throw new NotFoundException('Event not found');
     if (existing.createdById !== vendorId)
       throw new ForbiddenException('Access denied');
-    const updated = await this.update(id, dto);
+    const updated = await this.update(id, dto, false);
     // Auto-resubmit for review when a rejected event is edited
     if (existing.status === EventStatus.REJECTED) {
       return this.prisma.event.update({

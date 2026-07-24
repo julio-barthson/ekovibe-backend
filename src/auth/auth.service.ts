@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
@@ -190,26 +191,123 @@ export class AuthService {
       },
     });
 
-    await getMailjet()
-      .post('send', { version: 'v3.1' })
-      .request({
-        Messages: [
-          {
-            From: {
-              Email: process.env.SENDER_EMAIL_ADDRESS,
-              Name: 'Ekovibe',
+    // The account already exists at this point — a mail failure must not fail
+    // the signup, or the user is locked out of an account they can't re-create.
+    try {
+      await getMailjet()
+        .post('send', { version: 'v3.1' })
+        .request({
+          Messages: [
+            {
+              From: {
+                Email: process.env.SENDER_EMAIL_ADDRESS,
+                Name: 'Ekovibe',
+              },
+              To: [{ Email: user.email, Name: user.firstName }],
+              Subject: `Welcome to Ekovibe, ${user.firstName}`,
+              HTMLPart: WelcomeEmail({
+                firstName: user.firstName,
+              }),
             },
-            To: [{ Email: user.email, Name: user.firstName }],
-            Subject: `Welcome to Ekovibe, ${user.firstName}`,
-            HTMLPart: WelcomeEmail({
-              firstName: user.firstName,
-            }),
-          },
-        ],
-      });
+          ],
+        });
+    } catch (e) {
+      console.error('Failed to send welcome email:', e);
+    }
 
     const { password, refreshToken, ...result } = user;
     return this.login(result);
+  }
+
+  private async generateUniqueUsername(firstName: string, lastName: string) {
+    const baseUsername =
+      slugify(`${firstName} ${lastName}`.trim(), { lower: true }) || 'ekovibe';
+    let username = baseUsername;
+    let counter = 1;
+
+    while (await this.prisma.user.findUnique({ where: { username } })) {
+      username = `${baseUsername}-${counter}`;
+      counter++;
+    }
+
+    return username;
+  }
+
+  // Called by GoogleStrategy after Google verifies the account. Matches on
+  // email so someone who registered with a password can still use the Google
+  // button — we just link the provider rather than creating a duplicate.
+  async validateGoogleUser(profile: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    image: string | null;
+    emailVerified: boolean;
+  }) {
+    const email = profile.email.toLowerCase();
+
+    const existing = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existing) {
+      if (existing.isDeleted)
+        throw new UnauthorizedException('This account is no longer active');
+
+      const { password, refreshToken, ...user } = await this.prisma.user.update(
+        {
+          where: { id: existing.id },
+          data: {
+            // Don't clobber an uploaded avatar with the Google one.
+            image: existing.image ?? profile.image,
+            emailVerified: existing.emailVerified || profile.emailVerified,
+          },
+        },
+      );
+
+      return user;
+    }
+
+    const username = await this.generateUniqueUsername(
+      profile.firstName,
+      profile.lastName,
+    );
+
+    const created = await this.prisma.user.create({
+      data: {
+        email,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        username,
+        image: profile.image,
+        provider: 'google',
+        emailVerified: profile.emailVerified,
+        role: 'USER',
+      },
+    });
+
+    // A failed welcome email must never block sign-in.
+    try {
+      await getMailjet()
+        .post('send', { version: 'v3.1' })
+        .request({
+          Messages: [
+            {
+              From: {
+                Email: process.env.SENDER_EMAIL_ADDRESS,
+                Name: 'Ekovibe',
+              },
+              To: [{ Email: created.email, Name: created.firstName }],
+              Subject: `Welcome to Ekovibe, ${created.firstName}`,
+              HTMLPart: WelcomeEmail({ firstName: created.firstName }),
+            },
+          ],
+        });
+    } catch {
+      // swallow — the account already exists at this point
+    }
+
+    const { password, refreshToken, ...user } = created;
+    return user;
   }
 
   async findUserById(id: string) {
@@ -303,24 +401,33 @@ export class AuthService {
       data: { resetOTP: hashedOTP, resetOTPExpiry: expiry },
     });
 
-    await getMailjet()
-      .post('send', { version: 'v3.1' })
-      .request({
-        Messages: [
-          {
-            From: {
-              Email: process.env.SENDER_EMAIL_ADDRESS,
-              Name: 'Ekovibe',
+    // Unlike other mail, this one is the whole point of the request — if it
+    // fails, say so rather than reporting success for an email that never sent.
+    try {
+      await getMailjet()
+        .post('send', { version: 'v3.1' })
+        .request({
+          Messages: [
+            {
+              From: {
+                Email: process.env.SENDER_EMAIL_ADDRESS,
+                Name: 'Ekovibe',
+              },
+              To: [{ Email: email, Name: user.firstName }],
+              Subject: `Password Reset Code`,
+              HTMLPart: ForgotPasswordEmail({
+                firstName: user.firstName,
+                otp,
+              }),
             },
-            To: [{ Email: email, Name: user.firstName }],
-            Subject: `Password Reset Code`,
-            HTMLPart: ForgotPasswordEmail({
-              firstName: user.firstName,
-              otp,
-            }),
-          },
-        ],
-      });
+          ],
+        });
+    } catch (e) {
+      console.error('Failed to send password reset OTP:', e);
+      throw new ServiceUnavailableException(
+        'We could not send your reset code right now. Please try again shortly.',
+      );
+    }
 
     return { message: 'Password reset OTP sent to your email' };
   }
@@ -362,18 +469,14 @@ export class AuthService {
       return null; // expired or tampered
     }
 
-    // Step 2 — load the user by ID embedded in the token
+    // Step 2 — load the user by ID embedded in the token.
+    // Load the full record (not a narrow select): the response is fed straight
+    // into the client's auth store, so anything missing here is silently wiped
+    // from the persisted user — that's how `createdAt`, `image`, `userTier` and
+    // `isAdmin` used to disappear after a Google sign-in.
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        onboardingCompleted: true,
-        refreshToken: true,
-      },
+      include: { admin: true },
     });
 
     if (!user || !user.refreshToken) {
@@ -400,8 +503,24 @@ export class AuthService {
       data: { refreshToken: newRefreshToken },
     });
 
-    const { refreshToken: _omit, ...safeUser } = user;
-    return { accessToken, newRefreshToken, user: safeUser };
+    // Same shape as login() — the client replaces its whole stored user with
+    // this, so the two responses must not diverge.
+    const { password: _pw, refreshToken: _omit, ...safeUser } = user;
+    return {
+      accessToken,
+      newRefreshToken,
+      user: plainToClass(
+        UserResponseDto,
+        {
+          ...safeUser,
+          isAdmin: !!user.admin,
+          isVendor: user.role === 'VENDOR',
+          adminPosition: user.admin?.position ?? null,
+          adminModules: user.admin?.modules ?? null,
+        },
+        { excludeExtraneousValues: true },
+      ),
+    };
   }
 
   // ── Update Profile ─────────────────────────────────────────────────────────

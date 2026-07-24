@@ -49,19 +49,19 @@ model User {
 
   interests String[]
 
-  admin               Admin?
-  vendorProfile       VendorProfile?
-  events              Event[]
-  orders              Order[]
-  tickets             Ticket[]
-  wallet              VendorWallet?
-  withdrawalRequests  WithdrawalRequest[]
-  reservations        Reservation[]
-  posts               Post[]
-  venueOwnerProfile   VenueOwnerProfile?
-  waitlistEntries     ReservationWaitlist[]
-  cart                Cart?
-  ecomOrders          EcomOrder[]
+  admin              Admin?
+  vendorProfile      VendorProfile?
+  events             Event[]
+  orders             Order[]
+  tickets            Ticket[]
+  wallet             VendorWallet?
+  withdrawalRequests WithdrawalRequest[]
+  reservations       Reservation[]
+  posts              Post[]
+  venueOwnerProfile  VenueOwnerProfile?
+  waitlistEntries    ReservationWaitlist[]
+  cart               Cart?
+  ecomOrders         EcomOrder[]
 }
 
 enum AdminPosition {
@@ -117,27 +117,34 @@ enum EventStatus {
 }
 
 model Event {
-  id           String        @id @default(uuid())
-  title        String
-  slug         String        @unique
-  description  String?
-  category     EventCategory
-  status       EventStatus   @default(DRAFT)
-  coverImage   String?
-  date         DateTime
-  doorsOpen    String
-  venueName    String
-  venueAddress String?
-  city         String?
-  dressCode    String?
-  isMemberOnly    Boolean     @default(false)
+  id              String        @id @default(uuid())
+  title           String
+  slug            String        @unique
+  description     String?
+  category        EventCategory
+  status          EventStatus   @default(DRAFT)
+  coverImage      String?
+  date            DateTime
+  doorsOpen       String
+  venueName       String
+  venueAddress    String?
+  city            String?
+  dressCode       String?
+  isMemberOnly    Boolean       @default(false)
   rejectionReason String?
+
+  /// Platform service fee charged per ticket, in kobo. Admin-controlled per event.
+  serviceFee Int @default(30000)
 
   createdById String
   createdBy   User   @relation(fields: [createdById], references: [id])
 
-  ticketTiers TicketTier[]
-  orders      Order[]
+  ticketTiers        TicketTier[]
+  orders             Order[]
+  guestInvitations   GuestInvitation[]
+  guestConfig        GuestEventConfig?
+  attendanceRequests AttendanceRequest[]
+  settlement         EventSettlement?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -270,13 +277,13 @@ model VenueOwnerWallet {
 model VenueOwnerWithdrawal {
   id            String           @id @default(uuid())
   walletId      String
-  amount        Int              // in kobo
+  amount        Int // in kobo
   bankCode      String
   accountNumber String
   accountName   String
   status        WithdrawalStatus @default(PENDING)
   paystackRef   String?
-  note          String?          // admin note on approve/reject
+  note          String? // admin note on approve/reject
   createdAt     DateTime         @default(now())
   resolvedAt    DateTime?
 
@@ -385,8 +392,8 @@ enum VenueStatus {
 }
 
 enum BookingMode {
-  INSTANT  // auto-confirm on payment
-  REQUEST  // venue must approve after payment
+  INSTANT // auto-confirm on payment
+  REQUEST // venue must approve after payment
 }
 
 enum SpaceType {
@@ -455,7 +462,7 @@ model VenueOwnerProfile {
   accountName            String?
   isVerified             Boolean @default(false)
 
-  user   User             @relation(fields: [userId], references: [id])
+  user   User              @relation(fields: [userId], references: [id])
   venues Venue[]
   wallet VenueOwnerWallet?
 
@@ -514,11 +521,11 @@ model Venue {
 model VenueSpace {
   id          String    @id @default(uuid())
   venueId     String
-  name        String    // e.g. "Table 7", "VIP Section A", "The Cave Room"
+  name        String // e.g. "Table 7", "VIP Section A", "The Cave Room"
   type        SpaceType
-  capacity    Int       // max guests
+  capacity    Int // max guests
   description String?
-  minSpend    Int?      // in kobo, optional
+  minSpend    Int? // in kobo, optional
   images      String[]
   isActive    Boolean   @default(true)
   isDeleted   Boolean   @default(false)
@@ -536,8 +543,8 @@ model VenueOperatingHours {
   id        String    @id @default(uuid())
   venueId   String
   dayOfWeek DayOfWeek
-  openTime  String    // "18:00"
-  closeTime String    // "02:00"
+  openTime  String // "18:00"
+  closeTime String // "02:00"
   isClosed  Boolean   @default(false)
 
   venue Venue @relation(fields: [venueId], references: [id], onDelete: Cascade)
@@ -551,8 +558,8 @@ model VenueSession {
   id                  String      @id @default(uuid())
   venueId             String
   name                String
-  startTime           String      // "18:00"
-  endTime             String      // "21:00"
+  startTime           String // "18:00"
+  endTime             String // "21:00"
   slotDurationMinutes Int         @default(60)
   daysOfWeek          DayOfWeek[]
   isActive            Boolean     @default(true)
@@ -585,8 +592,8 @@ model ReservationPolicy {
 
   // Deposit settings
   depositType    DepositType @default(NONE)
-  depositAmount  Int?        // in kobo — used when depositType = FLAT
-  depositPercent Int?        // 0–100 — used when depositType = PERCENTAGE_OF_MIN_SPEND
+  depositAmount  Int? // in kobo — used when depositType = FLAT
+  depositPercent Int? // 0–100 — used when depositType = PERCENTAGE_OF_MIN_SPEND
 
   // Cancellation refund tiers (hours before booking time)
   // >= fullRefundHoursThreshold  → 100% refund
@@ -614,7 +621,7 @@ model Reservation {
   sessionId String?
 
   date      DateTime @db.Date
-  timeSlot  String   // e.g. "19:00"
+  timeSlot  String // e.g. "19:00"
   partySize Int
 
   status ReservationStatus @default(PENDING_PAYMENT)
@@ -681,11 +688,11 @@ model ReservationPayment {
 
 // Waitlist — guests queue for a full time slot
 model ReservationWaitlist {
-  id        String        @id @default(uuid())
+  id        String         @id @default(uuid())
   venueId   String
   userId    String
   sessionId String?
-  date      DateTime      @db.Date
+  date      DateTime       @db.Date
   timeSlot  String
   partySize Int
   status    WaitlistStatus @default(WAITING)
@@ -736,7 +743,7 @@ model Product {
   name        String
   slug        String          @unique
   description String
-  price       Int             // base price in kobo
+  price       Int // base price in kobo
   images      String[]
   category    ProductCategory @default(OTHER)
   isAvailable Boolean         @default(true)
@@ -749,11 +756,11 @@ model Product {
 }
 
 model ProductVariant {
-  id        String  @id @default(uuid())
+  id        String @id @default(uuid())
   productId String
-  name      String  // e.g. "Red / Large"
-  price     Int?    // override in kobo; null = use product base price
-  stock     Int     @default(0)
+  name      String // e.g. "Red / Large"
+  price     Int? // override in kobo; null = use product base price
+  stock     Int    @default(0)
 
   product    Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
   cartItems  CartItem[]
@@ -791,7 +798,7 @@ model CartItem {
 model DeliveryZone {
   id    String @id @default(uuid())
   state String @unique
-  fee   Int    // in kobo
+  fee   Int // in kobo
 }
 
 model EcomOrder {
@@ -820,6 +827,129 @@ model EcomOrder {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── Guest Invitations ────────────────────────────────────────────────────────
+
+enum GuestRsvpStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+enum SettlementStatus {
+  PENDING
+  PROCESSING
+  PAID
+}
+
+model GuestInvitation {
+  id              String          @id @default(uuid())
+  eventId         String
+  token           String          @unique
+  guestName       String
+  guestEmail      String
+  guestPhone      String
+  tableNumber     String?
+  status          GuestRsvpStatus @default(PENDING)
+  usedAt          DateTime?
+  qrCode          String?         @unique
+  isCheckedIn     Boolean         @default(false)
+  checkedInAt     DateTime?
+  reminder3SentAt DateTime?
+  reminder1SentAt DateTime?
+  followUpSentAt  DateTime?
+  consentGivenAt  DateTime?
+  dataDeletedAt   DateTime?
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([eventId, guestEmail])
+}
+
+model GuestEventConfig {
+  id            String    @id @default(uuid())
+  eventId       String    @unique
+  rsvpDeadline  DateTime?
+  customMessage String?
+  capacity      Int?
+
+  // Post-event follow-up
+  photoGalleryUrl String?
+  followUpMessage String?
+
+  // Custom invite branding
+  accentColor          String?
+  inviteHeaderImageUrl String?
+  inviteFromName       String?
+
+  // Request-to-attend mode
+  allowRequests Boolean @default(false)
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  updatedAt DateTime @updatedAt
+}
+
+// Guest attendance requests (for "Request to Attend" mode)
+model AttendanceRequest {
+  id          String        @id @default(uuid())
+  eventId     String
+  guestName   String
+  guestEmail  String
+  guestPhone  String
+  message     String?
+  status      RequestStatus @default(PENDING)
+  processedAt DateTime?
+  createdAt   DateTime      @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, guestEmail])
+}
+
+// Per-event settlement record for T+1 payouts
+model EventSettlement {
+  id                String           @id @default(uuid())
+  eventId           String           @unique
+  totalRevenue      Int // in kobo
+  ekovibeCommission Int // in kobo (sum of service fees collected)
+  netAmount         Int // in kobo
+  ticketCount       Int
+  status            SettlementStatus @default(PENDING)
+  accountName       String?
+  accountNumber     String?
+  bankName          String?
+  notes             String?
+  paidAt            DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id])
+}
+
+// Cross-event guest contact database ("The Guest Black Book")
+model GuestContact {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  name           String
+  phone          String
+  tags           String[]
+  notes          String?
+  totalEvents    Int       @default(0)
+  lastEventTitle String?
+  lastSeenAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
 // ─── Newsletter ───────────────────────────────────────────────────────────────

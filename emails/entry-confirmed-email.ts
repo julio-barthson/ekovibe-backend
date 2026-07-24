@@ -1,3 +1,5 @@
+import { SUPPORT_EMAIL } from './support-contact';
+
 interface EntryConfirmedEmailProps {
   firstName: string;
   eventTitle: string;
@@ -96,7 +98,7 @@ export function EntryConfirmedEmail({
               </table>
 
               <p style="margin:0;font-size:12px;color:#B8B0A8;line-height:1.7;">
-                This ticket has been used and cannot be re-scanned. If you believe this was an error, contact us immediately at <a href="mailto:the9ineagency@gmail.com" style="color:#C9A84C;text-decoration:none;">the9ineagency@gmail.com</a>.
+                This ticket has been used and cannot be re-scanned. If you believe this was an error, contact us immediately at <a href="mailto:${SUPPORT_EMAIL()}" style="color:#C9A84C;text-decoration:none;">${SUPPORT_EMAIL()}</a>.
               </p>
             </td>
           </tr>

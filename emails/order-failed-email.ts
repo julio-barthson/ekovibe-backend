@@ -1,3 +1,5 @@
+import { SUPPORT_EMAIL } from './support-contact';
+
 interface OrderFailedEmailProps {
   firstName: string;
   eventTitle: string;
@@ -101,7 +103,7 @@ export function OrderFailedEmail({
               </table>
 
               <p style="margin:0;font-size:12px;color:#B8B0A8;line-height:1.7;">
-                If you continue to experience issues, contact us at <a href="mailto:the9ineagency@gmail.com" style="color:#C9A84C;text-decoration:none;">the9ineagency@gmail.com</a> and quote your order reference.
+                If you continue to experience issues, contact us at <a href="mailto:${SUPPORT_EMAIL()}" style="color:#C9A84C;text-decoration:none;">${SUPPORT_EMAIL()}</a> and quote your order reference.
               </p>
             </td>
           </tr>

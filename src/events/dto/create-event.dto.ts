@@ -79,6 +79,12 @@ export class CreateEventDto {
   @IsOptional()
   isMemberOnly?: boolean;
 
+  // Admin-only; ignored on vendor-submitted events
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  serviceFee?: number; // in kobo, per ticket
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateTicketTierDto)

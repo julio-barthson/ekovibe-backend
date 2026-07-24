@@ -1,25 +1,34 @@
 import { SUPPORT_EMAIL } from './support-contact';
 
-interface EventRejectedEmailProps {
+interface EventCancelledEmailProps {
   firstName: string;
   eventTitle: string;
-  reason: string;
+  eventDate: string;
+  venueName: string;
+  orderReference: string;
+  ticketCount: number;
+  // Face value only — service fees are non-refundable per the refund policy
+  refundAmount: string;
   eventImageUrl?: string;
 }
 
-export function EventRejectedEmail({
+export function EventCancelledEmail({
   firstName,
   eventTitle,
-  reason,
+  eventDate,
+  venueName,
+  orderReference,
+  ticketCount,
+  refundAmount,
   eventImageUrl,
-}: EventRejectedEmailProps): string {
+}: EventCancelledEmailProps): string {
   return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Event Review Update — Ekovibe</title>
+  <title>Event Cancelled — Ekovibe</title>
 </head>
 <body style="margin:0;padding:0;background-color:#F5F0E8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F0E8;padding:48px 20px;">
@@ -47,62 +56,79 @@ export function EventRejectedEmail({
                   : ''
               }
 
-              <!-- Notice Banner -->
+              <!-- Cancellation Banner -->
               <table width="100%" cellpadding="0" cellspacing="0" style="background:#FEF2F2;border:1px solid #FECACA;border-radius:12px;margin-bottom:28px;">
                 <tr>
                   <td style="padding:18px 24px;">
-                    <p style="margin:0 0 3px;font-size:12px;font-weight:700;letter-spacing:0.15em;color:#DC2626;text-transform:uppercase;">Event Not Approved</p>
-                    <p style="margin:0;font-size:13px;color:#B91C1C;">Please review the feedback and resubmit for approval.</p>
+                    <p style="margin:0 0 3px;font-size:12px;font-weight:700;letter-spacing:0.15em;color:#DC2626;text-transform:uppercase;">Event Cancelled</p>
+                    <p style="margin:0;font-size:13px;color:#B91C1C;">Your ticket${ticketCount === 1 ? '' : 's'} will be refunded.</p>
                   </td>
                 </tr>
               </table>
 
               <h1 style="margin:0 0 8px;font-size:28px;font-weight:800;color:#1C1A14;line-height:1.2;">
-                Event Review<br/><span style="color:#DC2626;">Not Approved</span>
+                This Event Has<br/><span style="color:#DC2626;">Been Cancelled</span>
               </h1>
 
               <p style="margin:16px 0 32px;font-size:15px;color:#6B6560;line-height:1.7;">
-                ${firstName}, after reviewing your event submission, our team was unable to approve it at this time. Please read the feedback below, make the required changes, and resubmit for review.
+                ${firstName}, we're sorry — <strong style="color:#1C1A14;">${eventTitle}</strong> has been cancelled and will not go ahead. You do not need to do anything; your refund is being processed automatically.
               </p>
 
-              <!-- Event -->
-              <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E8E2D9;border-radius:12px;margin-bottom:24px;">
+              <!-- Booking Info -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E8E2D9;border-radius:12px;margin-bottom:28px;">
                 <tr>
-                  <td style="padding:16px 20px;background:#F9F7F3;border-radius:12px;">
+                  <td style="padding:16px 20px;border-bottom:1px solid #E8E2D9;background:#F9F7F3;border-radius:12px 12px 0 0;">
                     <p style="margin:0 0 3px;font-size:10px;letter-spacing:0.2em;color:#9E9892;text-transform:uppercase;">Event</p>
                     <p style="margin:0;font-size:15px;font-weight:700;color:#1C1A14;">${eventTitle}</p>
                   </td>
                 </tr>
-              </table>
-
-              <!-- Reason -->
-              <p style="margin:0 0 10px;font-size:10px;letter-spacing:0.2em;color:#9E9892;text-transform:uppercase;font-weight:600;">Feedback from the team</p>
-              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
                 <tr>
-                  <td style="background:#FEF2F2;border:1px solid #FECACA;border-left:4px solid #DC2626;border-radius:0 8px 8px 0;padding:20px 24px;">
-                    <p style="margin:0;font-size:14px;color:#1C1A14;line-height:1.7;">${reason}</p>
+                  <td style="padding:16px 20px;border-bottom:1px solid #E8E2D9;background:#F9F7F3;">
+                    <p style="margin:0 0 3px;font-size:10px;letter-spacing:0.2em;color:#9E9892;text-transform:uppercase;">Was Scheduled For</p>
+                    <p style="margin:0;font-size:14px;color:#6B6560;">${eventDate} &bull; ${venueName}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:16px 20px;border-bottom:1px solid #E8E2D9;background:#F9F7F3;">
+                    <p style="margin:0 0 3px;font-size:10px;letter-spacing:0.2em;color:#9E9892;text-transform:uppercase;">Tickets Held</p>
+                    <p style="margin:0;font-size:14px;color:#6B6560;">${ticketCount} ticket${ticketCount === 1 ? '' : 's'}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:16px 20px;background:#F9F7F3;border-radius:0 0 12px 12px;">
+                    <p style="margin:0 0 3px;font-size:10px;letter-spacing:0.2em;color:#9E9892;text-transform:uppercase;">Order Reference</p>
+                    <p style="margin:0;font-size:13px;font-family:'Courier New',Courier,monospace;color:#6B6560;">${orderReference}</p>
                   </td>
                 </tr>
               </table>
 
-              <p style="margin:0 0 28px;font-size:13px;color:#6B6560;line-height:1.7;">
-                Once you've made your edits, log in to your vendor dashboard to update the event and resubmit for approval.
-              </p>
+              <!-- Refund Detail -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:12px;margin-bottom:28px;">
+                <tr>
+                  <td style="padding:18px 24px;">
+                    <p style="margin:0 0 3px;font-size:10px;letter-spacing:0.2em;color:#15803D;text-transform:uppercase;">Refund Amount</p>
+                    <p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#166534;">${refundAmount}</p>
+                    <p style="margin:0;font-size:12px;color:#15803D;line-height:1.7;">
+                      This is the ticket face value, returned to your original payment method within 7&ndash;14 business days. Service fees are non-refundable.
+                    </p>
+                  </td>
+                </tr>
+              </table>
 
               <!-- CTA -->
               <table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
                 <tr>
                   <td style="background:#1C1A14;border-radius:8px;">
-                    <a href="${process.env.FRONTEND_URL}/vendor/events"
+                    <a href="${process.env.FRONTEND_URL}/ticketing"
                        style="display:inline-block;padding:14px 32px;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#ffffff;text-decoration:none;">
-                      Edit My Event
+                      Browse Other Experiences
                     </a>
                   </td>
                 </tr>
               </table>
 
               <p style="margin:0;font-size:12px;color:#B8B0A8;line-height:1.7;">
-                If you have questions about this decision, contact us at <a href="mailto:${SUPPORT_EMAIL()}" style="color:#C9A84C;text-decoration:none;">${SUPPORT_EMAIL()}</a>.
+                If you have not seen your refund after 14 business days, contact us at <a href="mailto:${SUPPORT_EMAIL()}" style="color:#C9A84C;text-decoration:none;">${SUPPORT_EMAIL()}</a> and quote your order reference.
               </p>
             </td>
           </tr>

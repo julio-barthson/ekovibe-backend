@@ -12,6 +12,9 @@ import { ReservationsModule } from './reservations/reservations.module';
 import { MediaModule } from './media/media.module';
 import { VaultModule } from './vault/vault.module';
 import { NewsletterModule } from './newsletter/newsletter.module';
+import { GuestsModule } from './guests/guests.module';
+import { SettlementModule } from './settlement/settlement.module';
+import { ContactsModule } from './contacts/contacts.module';
 
 @Module({
   imports: [
@@ -26,6 +29,9 @@ import { NewsletterModule } from './newsletter/newsletter.module';
     MediaModule,
     VaultModule,
     NewsletterModule,
+    GuestsModule,
+    SettlementModule,
+    ContactsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

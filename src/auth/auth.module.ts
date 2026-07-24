@@ -10,6 +10,21 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { AdminGuard } from 'src/guards/admin.guard';
 import { ModuleGuard } from 'src/guards/module.guard';
 import { SuperAdminGuard } from 'src/guards/super-admin.guard';
+import { GoogleStrategy } from './strategies/google.strategy';
+
+// passport-google-oauth20 throws on construction when clientID is missing, so
+// only instantiate it once the credentials are actually configured — otherwise
+// a missing env var takes the whole app down at boot. The check lives in a
+// factory (not at module scope) because ConfigModule loads .env after this
+// file is imported.
+const googleStrategyProvider = {
+  provide: GoogleStrategy,
+  useFactory: (authService: AuthService) =>
+    process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+      ? new GoogleStrategy(authService)
+      : null,
+  inject: [AuthService],
+};
 
 @Module({
   imports: [JwtModule.register({})],
@@ -24,6 +39,7 @@ import { SuperAdminGuard } from 'src/guards/super-admin.guard';
     PrismaService,
     LocalStrategy,
     JwtStrategy,
+    googleStrategyProvider,
   ],
   exports: [TokenService, JwtAuthGuard],
 })

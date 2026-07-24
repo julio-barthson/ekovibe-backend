@@ -5,7 +5,11 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import Mailjet from 'node-mailjet';
-import { EventStatus, OrderStatus } from 'generated/prisma/client';
+import {
+  EventStatus,
+  GuestRsvpStatus,
+  OrderStatus,
+} from 'generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaystackService } from './paystack.service';
 import { InitiateOrderDto } from './dto/initiate-order.dto';
@@ -40,7 +44,8 @@ function generateTicketCode(eventTitle: string): string {
   return `${abbrev}-${random}`;
 }
 
-const SERVICE_FEE_PER_TICKET = 15000; // ₦2,500 in kobo
+// Fallback only — the per-ticket fee is set per event (Event.serviceFee, kobo)
+const DEFAULT_SERVICE_FEE_PER_TICKET = 30000; // ₦300 in kobo
 
 @Injectable()
 export class OrdersService {
@@ -100,7 +105,8 @@ export class OrdersService {
       const tier = tiers.find((t) => t.id === item.tierId)!;
       return s + tier.price * item.quantity;
     }, 0);
-    const serviceFee = SERVICE_FEE_PER_TICKET * totalTickets;
+    const feePerTicket = event.serviceFee ?? DEFAULT_SERVICE_FEE_PER_TICKET;
+    const serviceFee = feePerTicket * totalTickets;
     const total = subtotal + serviceFee;
 
     // Generate unique order reference (no uuid dependency)
@@ -234,44 +240,46 @@ export class OrdersService {
 
     // Fulfill in a single transaction: update order, increment sold, create tickets, credit vendor wallet
     const vendorId = order.event.createdById;
-    const [updatedOrder, tickets] = await this.prisma.$transaction(async (tx) => {
-      // 1. Mark order as paid
-      const paid = await tx.order.update({
-        where: { id: order.id },
-        data: {
-          status: OrderStatus.PAID,
-          paystackReference: paystackData.reference,
-          paystackData: paystackData as any,
-        },
-      });
+    const [updatedOrder, tickets] = await this.prisma.$transaction(
+      async (tx) => {
+        // 1. Mark order as paid
+        const paid = await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: OrderStatus.PAID,
+            paystackReference: paystackData.reference,
+            paystackData: paystackData as any,
+          },
+        });
 
-      // 2. Increment sold count for each tier
-      await Promise.all(
-        order.items.map((item) =>
-          tx.ticketTier.update({
-            where: { id: item.ticketTierId },
-            data: { sold: { increment: item.quantity } },
-          }),
-        ),
-      );
+        // 2. Increment sold count for each tier
+        await Promise.all(
+          order.items.map((item) =>
+            tx.ticketTier.update({
+              where: { id: item.ticketTierId },
+              data: { sold: { increment: item.quantity } },
+            }),
+          ),
+        );
 
-      // 3. Issue tickets
-      await tx.ticket.createMany({ data: ticketData });
-      const issued = await tx.ticket.findMany({
-        where: { orderId: order.id },
-        include: { orderItem: { include: { ticketTier: true } } },
-      });
+        // 3. Issue tickets
+        await tx.ticket.createMany({ data: ticketData });
+        const issued = await tx.ticket.findMany({
+          where: { orderId: order.id },
+          include: { orderItem: { include: { ticketTier: true } } },
+        });
 
-      // 4. Credit vendor wallet — inside the transaction so wallet credit
-      //    only happens if the entire fulfillment succeeds, and never twice.
-      await tx.vendorWallet.upsert({
-        where: { vendorId },
-        create: { vendorId, balance: order.subtotal },
-        update: { balance: { increment: order.subtotal } },
-      });
+        // 4. Credit vendor wallet — inside the transaction so wallet credit
+        //    only happens if the entire fulfillment succeeds, and never twice.
+        await tx.vendorWallet.upsert({
+          where: { vendorId },
+          create: { vendorId, balance: order.subtotal },
+          update: { balance: { increment: order.subtotal } },
+        });
 
-      return [paid, issued] as const;
-    });
+        return [paid, issued] as const;
+      },
+    );
 
     // Check if event is now sold out
     await this.checkAndUpdateSoldOutStatus(order.eventId);
@@ -403,12 +411,15 @@ export class OrdersService {
       where: { code },
       include: {
         user: { select: { firstName: true, lastName: true, email: true } },
-        order: { include: { event: { select: { title: true, coverImage: true } } } },
+        order: {
+          include: { event: { select: { title: true, coverImage: true } } },
+        },
         orderItem: { include: { ticketTier: { select: { name: true } } } },
       },
     });
 
-    if (!ticket) throw new NotFoundException('Invalid ticket code');
+    // Fall through to guest QR check if no regular ticket found
+    if (!ticket) return this.scanGuestQR(code);
     if (ticket.isUsed) {
       return {
         valid: false,
@@ -476,6 +487,42 @@ export class OrdersService {
     };
   }
 
+  private async scanGuestQR(qrCode: string) {
+    const guest = await this.prisma.guestInvitation.findUnique({
+      where: { qrCode },
+      include: { event: { select: { title: true } } },
+    });
+
+    if (!guest || guest.status !== GuestRsvpStatus.CONFIRMED) {
+      throw new NotFoundException('Invalid ticket code');
+    }
+
+    const tier = `Guest${guest.tableNumber ? ` — Table ${guest.tableNumber}` : ''}`;
+
+    if (guest.isCheckedIn) {
+      return {
+        valid: false,
+        reason: 'ALREADY_USED',
+        usedAt: guest.checkedInAt,
+        holder: guest.guestName,
+        tier,
+        event: guest.event.title,
+      };
+    }
+
+    await this.prisma.guestInvitation.update({
+      where: { id: guest.id },
+      data: { isCheckedIn: true, checkedInAt: new Date() },
+    });
+
+    return {
+      valid: true,
+      holder: guest.guestName,
+      tier,
+      event: guest.event.title,
+    };
+  }
+
   // ── Vendor attendee list ──────────────────────────────────────────────────
 
   async getVendorEventAttendees(eventId: string, vendorId: string) {
@@ -538,7 +585,13 @@ export class OrdersService {
       where: { code },
       include: {
         user: { select: { firstName: true, lastName: true, email: true } },
-        order: { include: { event: { select: { title: true, createdById: true, coverImage: true } } } },
+        order: {
+          include: {
+            event: {
+              select: { title: true, createdById: true, coverImage: true },
+            },
+          },
+        },
         orderItem: { include: { ticketTier: { select: { name: true } } } },
       },
     });
@@ -570,7 +623,10 @@ export class OrdersService {
         .request({
           Messages: [
             {
-              From: { Email: process.env.SENDER_EMAIL_ADDRESS, Name: 'Ekovibe' },
+              From: {
+                Email: process.env.SENDER_EMAIL_ADDRESS,
+                Name: 'Ekovibe',
+              },
               To: [{ Email: ticket.user.email, Name: ticket.user.firstName }],
               Subject: `Entry Confirmed — ${ticket.order.event.title}`,
               HTMLPart: EntryConfirmedEmail({

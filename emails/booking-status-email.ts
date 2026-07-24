@@ -1,3 +1,5 @@
+import { SUPPORT_EMAIL } from './support-contact';
+
 interface BookingStatusEmailProps {
   recipientName: string;
   bookingNumber: string;
@@ -148,7 +150,7 @@ export const BookingStatusEmail = ({
               <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.25em;color:#C9A84C;text-transform:uppercase;">EKOVIBE</p>
               <p style="margin:0 0 8px;font-size:11px;color:#9E9892;">Lagos &bull; Abuja &bull; Ibadan</p>
               <p style="margin:0 0 6px;font-size:11px;color:#B8B0A8;">&copy; ${new Date().getFullYear()} ekovibe Lifestyle Group</p>
-              <p style="margin:0;font-size:11px;color:#B8B0A8;">If you have any questions, please <a href="mailto:the9ineagency@gmail.com" style="color:#C9A84C;text-decoration:none;">contact support</a>.</p>
+              <p style="margin:0;font-size:11px;color:#B8B0A8;">If you have any questions, please <a href="mailto:${SUPPORT_EMAIL()}" style="color:#C9A84C;text-decoration:none;">contact support</a>.</p>
             </td>
           </tr>
 
